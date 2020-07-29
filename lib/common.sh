@@ -35,13 +35,18 @@ MANAGE_PRO_BRIDGE=${MANAGE_PRO_BRIDGE:-y}
 MANAGE_INT_BRIDGE=${MANAGE_INT_BRIDGE:-y}
 # Internal interface, to bridge virbr0
 INT_IF=${INT_IF:-}
-#Root disk to deploy coreOS - use /dev/sda on BM
+# Root disk to deploy coreOS - use /dev/sda on BM
 ROOT_DISK_NAME=${ROOT_DISK_NAME-"/dev/sda"}
-#Container runtime
-CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-"podman"}
 # Hostname format
 NODE_HOSTNAME_FORMAT=${NODE_HOSTNAME_FORMAT:-"node-%d"}
-
+# Check OS type and version
+OS=$(awk -F= '/^ID=/ { print $2 }' /etc/os-release | tr -d '"')
+# Container runtime
+if [[ "${OS}" == ubuntu ]]; then
+  CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-"docker"}
+else
+  CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-"podman"}
+fi
 
 if [[ "${CONTAINER_RUNTIME}" == "podman" ]]; then
   export POD_NAME="--pod ironic-pod"
@@ -51,6 +56,7 @@ else
   export POD_NAME_INFRA=""
 fi
 
+export OS
 export SSH_KEY=${SSH_KEY:-"${HOME}/.ssh/id_rsa"}
 export SSH_PUB_KEY=${SSH_PUB_KEY:-"${SSH_KEY}.pub"}
 # Generate user ssh key
@@ -77,15 +83,29 @@ FILESYSTEM=${FILESYSTEM:="/"}
 # CAPM3_RUN_LOCAL : run the CAPI operator locally
 
 function get_latest_release() {
-    # shellcheck disable=SC2005
-    echo "$(curl -sL "${1}"  | jq -r '.tag_name')"
+  set +x
+  if [ -z "${GITHUB_TOKEN:-}" ]; then
+    release="$(curl -sL "${1}")" || ( set -x && exit 1 )
+  else
+    release="$(curl -H "Authorization: token ${GITHUB_TOKEN}" -sL "${1}")" || ( set -x && exit 1 )
+  fi
+  # This gets the latest release as vx.y.z , ignoring any version with a suffix starting with - , for example -rc0
+  release_tag="$(echo "$release" | jq -r "[.[].tag_name | select( startswith(\"${2:-""}\")) | select(contains(\"-\")==false)] | max ")"
+  if [[ "$release_tag" == "null" ]]; then
+    set -x
+    exit 1
+  fi
+  set -x
+  # shellcheck disable=SC2005
+  echo "$release_tag"
 }
 
-# CAPI version
-export CAPI_VERSION=${CAPI_VERSION:-"v1alpha3"}
-CAPI_VERSION_LIST="v1alpha3 v1alpha4"
-if ! echo "${CAPI_VERSION_LIST}" | grep -wq "${CAPI_VERSION}"; then
-  echo "Invalid CAPI version : ${CAPI_VERSION}. Not in : ${CAPI_VERSION_LIST}"
+# CAPM3 version, defaults to CAPI_VERSION for backwards compatibility, and to v1alpha3
+# TODO remove the defaulting to CAPI_VERSION if multiple CAPI_VERSION work with a CAPM3 version
+export CAPM3_VERSION="${CAPM3_VERSION:-${CAPI_VERSION:-"v1alpha3"}}"
+CAPM3_VERSION_LIST="v1alpha3 v1alpha4"
+if ! echo "${CAPM3_VERSION_LIST}" | grep -wq "${CAPM3_VERSION}"; then
+  echo "Invalid CAPM3 version : ${CAPM3_VERSION}. Not in : ${CAPM3_VERSION_LIST}"
   exit 1
 fi
 
@@ -93,27 +113,48 @@ M3PATH="${M3PATH:-${GOPATH}/src/github.com/metal3-io}"
 BMOPATH="${BMOPATH:-${M3PATH}/baremetal-operator}"
 # shellcheck disable=SC2034
 RUN_LOCAL_IRONIC_SCRIPT="${BMOPATH}/tools/run_local_ironic.sh"
+
 CAPM3PATH="${CAPM3PATH:-${M3PATH}/cluster-api-provider-metal3}"
-
-CAPI_BASE_URL="${CAPI_BASE_URL:-kubernetes-sigs/cluster-api}"
 CAPM3_BASE_URL="${CAPM3_BASE_URL:-metal3-io/cluster-api-provider-metal3}"
-
-CAPIREPO="${CAPIREPO:-https://github.com/${CAPI_BASE_URL}}"
 CAPM3REPO="${CAPM3REPO:-https://github.com/${CAPM3_BASE_URL}}"
+CAPM3RELEASEPATH="${CAPM3RELEASEPATH:-https://api.github.com/repos/${CAPM3_BASE_URL}/releases}"
 
 CAPIPATH="${CAPIPATH:-${M3PATH}/cluster-api}"
-CAPM3RELEASEPATH="${CAPM3RELEASEPATH:-https://api.github.com/repos/${CAPM3_BASE_URL}/releases/latest}"
-export CAPM3RELEASE="${CAPM3RELEASE:-$(get_latest_release "${CAPM3RELEASEPATH}")}"
+CAPI_BASE_URL="${CAPI_BASE_URL:-kubernetes-sigs/cluster-api}"
+CAPIREPO="${CAPIREPO:-https://github.com/${CAPI_BASE_URL}}"
+CAPIRELEASEPATH="${CAPIRELEASEPATH:-https://api.github.com/repos/${CAPI_BASE_URL}/releases}"
 
-CAPIRELEASEPATH="${CAPIRELEASEPATH:-https://api.github.com/repos/${CAPI_BASE_URL}/releases/latest}"
-export CAPIRELEASE="${CAPIRELEASE:-$(get_latest_release "${CAPIRELEASEPATH}")}"
+if [ "${CAPM3_VERSION}" == "v1alpha4" ]; then
 
-if [ "${CAPI_VERSION}" == "v1alpha4" ]; then
   CAPM3BRANCH="${CAPM3BRANCH:-master}"
+  export CAPM3RELEASE="${CAPM3RELEASE:-$(get_latest_release "${CAPM3RELEASEPATH}" "v0.4.")}"
+
+  # Required CAPI version
+  # TODO if this requires to support multiple CAPI versions, use a list check like CAPM#_VERSION
+  export CAPI_VERSION="v1alpha3"
+  export CAPIRELEASE="${CAPIRELEASE:-$(get_latest_release "${CAPIRELEASEPATH}" "v0.3.")}"
+  CAPIBRANCH="${CAPIBRANCH:-${CAPIRELEASE}}"
+
 else
+
   CAPM3BRANCH="${CAPM3BRANCH:-release-0.3}"
+  export CAPM3RELEASE="${CAPM3RELEASE:-$(get_latest_release "${CAPM3RELEASEPATH}" "v0.3.")}"
+
+  # Required CAPI version
+  export CAPI_VERSION="v1alpha3"
+  export CAPIRELEASE="${CAPIRELEASE:-$(get_latest_release "${CAPIRELEASEPATH}" "v0.3.")}"
+  CAPIBRANCH="${CAPIBRANCH:-${CAPIRELEASE}}"
 fi
-CAPIBRANCH="${CAPIBRANCH:-master}"
+
+# On first iteration, jq might not be installed
+if [[ "$CAPIRELEASE" == "" ]]; then
+  command -v jq &> /dev/null && echo "Failed to fetch CAPI release from Github" && exit 1
+fi
+
+if [[ "$CAPM3RELEASE" == "" ]]; then
+  command -v jq &> /dev/null && echo "Failed to fetch CAPM3 release from Github" && exit 1
+fi
+
 
 BMOREPO="${BMOREPO:-https://github.com/metal3-io/baremetal-operator.git}"
 BMOBRANCH="${BMOBRANCH:-master}"
@@ -152,7 +193,7 @@ export BAREMETAL_OPERATOR_IMAGE=${BAREMETAL_OPERATOR_IMAGE:-"quay.io/metal3-io/b
 export OPENSTACK_CONFIG=$HOME/.config/openstack/clouds.yaml
 
 # CAPM3 controller image
-if [ "${CAPI_VERSION}" == "v1alpha3" ]; then
+if [ "${CAPM3_VERSION}" == "v1alpha3" ]; then
   export CAPM3_IMAGE=${CAPM3_IMAGE:-"quay.io/metal3-io/cluster-api-provider-metal3:release-0.3"}
 else
   export CAPM3_IMAGE=${CAPM3_IMAGE:-"quay.io/metal3-io/cluster-api-provider-metal3:master"}
@@ -204,11 +245,10 @@ if ! sudo -n uptime &> /dev/null ; then
   exit 1
 fi
 
-# Check OS type and version
-OS=$(awk -F= '/^ID=/ { print $2 }' /etc/os-release | tr -d '"')
-export OS
 OS_VERSION=$(awk -F= '/^VERSION_ID=/ { print $2 }' /etc/os-release | tr -d '"' | cut -f1 -d'.')
+OS_VERSION_ID=$(awk -F= '/^VERSION_ID=/ { print $2 }' /etc/os-release | tr -d '"')
 export OS_VERSION
+export OS_VERSION_ID
 if [[ $OS == centos ]]; then
   if [[ ${OS_VERSION} != 7 && ${OS_VERSION} != 8 ]]; then
     echo "Required CentOS 7/8 or RHEL 8 or Ubuntu 18.04"
@@ -220,8 +260,9 @@ elif [[ $OS == rhel ]]; then
     exit 1
   fi
 elif [[ $OS == ubuntu ]]; then
-  if [[ ${OS_VERSION} -ne 18 ]]; then
-    echo "Required CentOS 7/8 or RHEL 8 or Ubuntu 18.04"
+  if [[ ${OS_VERSION_ID} != "18.04" && ${OS_VERSION_ID} != "20.04" ]]; then
+    # Ubuntu 18.04 is supported, but the target VM cannot use UEFI, hence we are deprecating it
+    echo "Required CentOS 7/8 or RHEL 8 or Ubuntu 20.04"
     exit 1
   fi
 else

@@ -1,6 +1,7 @@
 export IRONIC_HOST_IP='{{ IRONIC_HOST_IP }}'
 export DEPLOY_KERNEL_URL='{{ DEPLOY_KERNEL_URL }}'
 export DEPLOY_RAMDISK_URL='{{ DEPLOY_RAMDISK_URL }}'
+export IRONIC_AUTH_STRATEGY='{{ IRONIC_AUTH_STRATEGY }}'
 export IRONIC_URL='{{ IRONIC_URL }}'
 export IRONIC_INSPECTOR_URL='{{ IRONIC_INSPECTOR_URL }}'
 export POD_CIDR='{{ POD_CIDR }}'
@@ -29,7 +30,7 @@ export CTLPLANE_KUBEADM_EXTRA_CONFIG="
       sshAuthorizedKeys:
       - {{ SSH_PUB_KEY_CONTENT }}
     preKubeadmCommands:
-{% if CAPI_VERSION == "v1alpha3" %}
+{% if CAPM3_VERSION == "v1alpha3" %}
       - ip link set dev enp2s0 up
       - dhclient enp2s0
 {% endif %}
@@ -122,7 +123,7 @@ export CTLPLANE_KUBEADM_EXTRA_CONFIG="
                   {{ CLUSTER_APIENDPOINT_HOST }}
               }
           }
-{% if CAPI_VERSION == "v1alpha3" %}
+{% if CAPM3_VERSION == "v1alpha3" %}
       - path: /etc/netplan/51-cloud-config.yaml
         owner: root:root
         permissions: '0644'
@@ -145,8 +146,12 @@ export CTLPLANE_KUBEADM_EXTRA_CONFIG="
             bridges:
               {{ IRONIC_ENDPOINT_BRIDGE }}:
                 interfaces: [enp1s0]
-                addresses: 
-                - {{ "{{ ds.meta_data.provisioningIP }}" }}/{{ "{{ ds.meta_data.provisioningCIDR }}" }}  
+{% if CAPM3_VERSION == "v1alpha3" %}
+                dhcp4: true
+{% else %}
+                addresses:
+                - {{ "{{ ds.meta_data.provisioningIP }}" }}/{{ "{{ ds.meta_data.provisioningCIDR }}" }}
+{% endif %}
       - path : /etc/docker/daemon.json
         owner: root:root
         permissions: '0644'
@@ -162,7 +167,7 @@ export WORKERS_KUBEADM_EXTRA_CONFIG="
         sshAuthorizedKeys:
         - {{ SSH_PUB_KEY_CONTENT }}
       preKubeadmCommands:
-{% if CAPI_VERSION == "v1alpha3" %}
+{% if CAPM3_VERSION == "v1alpha3" %}
         - ip link set dev enp2s0 up
         - dhclient enp2s0
 {% endif %}
@@ -188,7 +193,7 @@ export WORKERS_KUBEADM_EXTRA_CONFIG="
         - systemctl enable --now docker kubelet
         - usermod -aG docker {{ IMAGE_USERNAME }}
       files:
-{% if CAPI_VERSION == "v1alpha3" %}
+{% if CAPM3_VERSION == "v1alpha3" %}
         - path: /etc/netplan/51-cloud-config.yaml
           owner: root:root
           permissions: '0644'
@@ -211,8 +216,12 @@ export WORKERS_KUBEADM_EXTRA_CONFIG="
               bridges:
                 {{ IRONIC_ENDPOINT_BRIDGE }}:
                   interfaces: [enp1s0]
-                  addresses: 
-                  - {{ "{{ ds.meta_data.provisioningIP }}" }}/{{ "{{ ds.meta_data.provisioningCIDR }}" }}  
+{% if CAPM3_VERSION == "v1alpha3" %}
+                  dhcp4: true
+{% else %}
+                  addresses:
+                  - {{ "{{ ds.meta_data.provisioningIP }}" }}/{{ "{{ ds.meta_data.provisioningCIDR }}" }}
+{% endif %}
         - path : /etc/docker/daemon.json
           owner: root:root
           permissions: '0644'

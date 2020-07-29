@@ -25,12 +25,11 @@ function clone_repos() {
       pushd "${M3PATH}"
       git clone "${BMOREPO}" "${BMOPATH}"
       popd
+      pushd "${BMOPATH}"
+      git checkout "${BMOBRANCH}"
+      git pull -r || true
+      popd
     fi
-    pushd "${BMOPATH}"
-    git fetch
-    git checkout "${BMOBRANCH}"
-    git pull -r || true
-    popd
 
     if [[ -d "${CAPM3PATH}" && "${FORCE_REPO_UPDATE}" == "true" ]]; then
       rm -rf "${CAPM3PATH}"
@@ -39,12 +38,12 @@ function clone_repos() {
       pushd "${M3PATH}"
       git clone "${CAPM3REPO}" "${CAPM3PATH}"
       popd
+      pushd "${CAPM3PATH}"
+      git checkout "${CAPM3BRANCH}"
+      git pull -r || true
+      popd
     fi
-    pushd "${CAPM3PATH}"
-    git fetch
-    git checkout "${CAPM3BRANCH}"
-    git pull -r || true
-    popd
+
     #TODO Consider option to download prebaked clusterctl binary
     if [[ -d "${CAPIPATH}" && "${FORCE_REPO_UPDATE}" == "true" ]]; then
       rm -rf "${CAPIPATH}"
@@ -53,13 +52,11 @@ function clone_repos() {
       pushd "${M3PATH}"
       git clone "${CAPIREPO}" "${CAPIPATH}"
       popd
+      pushd "${CAPIPATH}"
+      git checkout "${CAPIBRANCH}"
+      git pull -r || true
+      popd
     fi
-    pushd "${CAPIPATH}"
-    git fetch
-    git checkout "${CAPIBRANCH}"
-    git pull -r || true
-    popd
-
 }
 
 function patch_clusterctl(){
@@ -71,7 +68,7 @@ function patch_clusterctl(){
     make set-manifest-image
   fi
 
-  if [ -n "${BAREMETAL_OPERATOR_LOCAL_IMAGE}" ] && [ "${CAPI_VERSION}" != "v1alpha3" ]; then
+  if [ -n "${BAREMETAL_OPERATOR_LOCAL_IMAGE}" ] && [ "${CAPM3_VERSION}" != "v1alpha3" ]; then
     BMO_IMAGE_NAME="${BAREMETAL_OPERATOR_LOCAL_IMAGE##*/}"
     export MANIFEST_IMG_BMO="${REGISTRY}/localimages/$BMO_IMAGE_NAME"
     export MANIFEST_TAG_BMO="latest"
@@ -122,6 +119,7 @@ configMapGenerator:
   - DEPLOY_RAMDISK_URL=http://$IRONIC_HOST:6180/images/ironic-python-agent.initramfs
   - IRONIC_ENDPOINT=http://$IRONIC_HOST:6385/v1/
   - IRONIC_INSPECTOR_ENDPOINT=http://$IRONIC_HOST:5050/v1/
+  - IRONIC_AUTH_STRATEGY=noauth
   - CACHEURL=http://$IRONIC_HOST/images
   - IRONIC_FAST_TRACK=false
   name: ironic-bmo-configmap
@@ -146,8 +144,8 @@ function deploy_kustomization() {
 
 function launch_baremetal_operator() {
     pushd "${BMOPATH}"
-    
-    if [ "${CAPI_VERSION}" != "v1alpha3" ]; then
+
+    if [ "${CAPM3_VERSION}" != "v1alpha3" ]; then
       kubectl create namespace metal3
     else
       BMO_CONFIG="${BMOPATH}/deploy/default"
@@ -163,7 +161,7 @@ function launch_baremetal_operator() {
       ${RUN_LOCAL_IRONIC_SCRIPT}
     fi
 
-    if [ "${BMO_RUN_LOCAL}" = true ] && [ "${CAPI_VERSION}" == "v1alpha3" ]; then
+    if [ "${BMO_RUN_LOCAL}" = true ] && [ "${CAPM3_VERSION}" == "v1alpha3" ]; then
       touch bmo.out.log
       touch bmo.err.log
       kubectl scale deployment metal3-baremetal-operator -n metal3 --replicas=0
@@ -192,14 +190,15 @@ function make_bm_hosts() {
            -password "$password" \
            -user "$user" \
            -boot-mac "$mac" \
+           -boot-mode "legacy" \
            "$name"
     done
 }
 
 function apply_bm_hosts() {
     pushd "${BMOPATH}"
-    list_nodes | make_bm_hosts > bmhosts_crs.yaml
-    kubectl apply -f bmhosts_crs.yaml -n metal3
+    list_nodes | make_bm_hosts > "${WORKING_DIR}/bmhosts_crs.yaml"
+    kubectl apply -f "${WORKING_DIR}/bmhosts_crs.yaml" -n metal3
     popd
 }
 
@@ -246,7 +245,7 @@ function launch_cluster_api_provider_metal3() {
       nohup make run >> capm3.out.log 2>> capm3.err.log &
     fi
 
-    if [ "${BMO_RUN_LOCAL}" == true ] && [ "${CAPI_VERSION}" != "v1alpha3" ]; then
+    if [ "${BMO_RUN_LOCAL}" == true ] && [ "${CAPM3_VERSION}" != "v1alpha3" ]; then
       touch bmo.out.log
       touch bmo.err.log
       kubectl scale deployment capm3-metal3-baremetal-operator -n capm3-system --replicas=0

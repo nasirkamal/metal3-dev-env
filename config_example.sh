@@ -91,7 +91,8 @@
 #export TEST_MAX_TIME=120
 
 #
-# Set the driver. The default value is 'ipmi'
+# Set the driver. The default value is 'mixed' (alternate nodes between ipmi
+# and redfish).
 #
 #export BMC_DRIVER="redfish"
 
@@ -99,7 +100,7 @@
 # Accepted values : v1alpha3 v1alpha4
 # default: v1alpha3
 #
-#export CAPI_VERSION=v1alpha3
+#export CAPM3_VERSION=v1alpha3
 
 #export KUBERNETES_VERSION="v1.18.0"
 
