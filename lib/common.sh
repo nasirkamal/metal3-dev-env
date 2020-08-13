@@ -82,6 +82,24 @@ FILESYSTEM=${FILESYSTEM:="/"}
 # BMO_RUN_LOCAL : run the baremetal operator locally (not in Kubernetes cluster)
 # CAPM3_RUN_LOCAL : run the CAPI operator locally
 
+function get_latest_release() {
+  set +x
+  if [ -z "${GITHUB_TOKEN:-}" ]; then
+    release="$(curl -sL "${1}")" || ( set -x && exit 1 )
+  else
+    release="$(curl -H "Authorization: token ${GITHUB_TOKEN}" -sL "${1}")" || ( set -x && exit 1 )
+  fi
+  # This gets the latest release as vx.y.z , ignoring any version with a suffix starting with - , for example -rc0
+  release_tag="$(echo "$release" | jq -r "[.[].tag_name | select( startswith(\"${2:-""}\")) | select(contains(\"-\")==false)] | max ")"
+  if [[ "$release_tag" == "null" ]]; then
+    set -x
+    exit 1
+  fi
+  set -x
+  # shellcheck disable=SC2005
+  echo "$release_tag"
+}
+
 # CAPM3 version, defaults to CAPI_VERSION for backwards compatibility, and to v1alpha3
 # TODO remove the defaulting to CAPI_VERSION if multiple CAPI_VERSION work with a CAPM3 version
 export CAPM3_VERSION="${CAPM3_VERSION:-${CAPI_VERSION:-"v1alpha3"}}"
@@ -99,23 +117,42 @@ RUN_LOCAL_IRONIC_SCRIPT="${BMOPATH}/tools/run_local_ironic.sh"
 CAPM3PATH="${CAPM3PATH:-${M3PATH}/cluster-api-provider-metal3}"
 CAPM3_BASE_URL="${CAPM3_BASE_URL:-metal3-io/cluster-api-provider-metal3}"
 CAPM3REPO="${CAPM3REPO:-https://github.com/${CAPM3_BASE_URL}}"
+CAPM3RELEASEPATH="${CAPM3RELEASEPATH:-https://api.github.com/repos/${CAPM3_BASE_URL}/releases}"
 
 CAPIPATH="${CAPIPATH:-${M3PATH}/cluster-api}"
 CAPI_BASE_URL="${CAPI_BASE_URL:-kubernetes-sigs/cluster-api}"
 CAPIREPO="${CAPIREPO:-https://github.com/${CAPI_BASE_URL}}"
+CAPIRELEASEPATH="${CAPIRELEASEPATH:-https://api.github.com/repos/${CAPI_BASE_URL}/releases}"
 
 if [ "${CAPM3_VERSION}" == "v1alpha4" ]; then
 
   CAPM3BRANCH="${CAPM3BRANCH:-master}"
+  export CAPM3RELEASE="${CAPM3RELEASE:-$(get_latest_release "${CAPM3RELEASEPATH}" "v0.4.")}"
+
   # Required CAPI version
   # TODO if this requires to support multiple CAPI versions, use a list check like CAPM#_VERSION
   export CAPI_VERSION="v1alpha3"
+  export CAPIRELEASE="${CAPIRELEASE:-$(get_latest_release "${CAPIRELEASEPATH}" "v0.3.")}"
+  CAPIBRANCH="${CAPIBRANCH:-${CAPIRELEASE}}"
 
 else
 
   CAPM3BRANCH="${CAPM3BRANCH:-release-0.3}"
+  export CAPM3RELEASE="${CAPM3RELEASE:-$(get_latest_release "${CAPM3RELEASEPATH}" "v0.3.")}"
+
   # Required CAPI version
   export CAPI_VERSION="v1alpha3"
+  export CAPIRELEASE="${CAPIRELEASE:-$(get_latest_release "${CAPIRELEASEPATH}" "v0.3.")}"
+  CAPIBRANCH="${CAPIBRANCH:-${CAPIRELEASE}}"
+fi
+
+# On first iteration, jq might not be installed
+if [[ "$CAPIRELEASE" == "" ]]; then
+  command -v jq &> /dev/null && echo "Failed to fetch CAPI release from Github" && exit 1
+fi
+
+if [[ "$CAPM3RELEASE" == "" ]]; then
+  command -v jq &> /dev/null && echo "Failed to fetch CAPM3 release from Github" && exit 1
 fi
 
 
@@ -129,11 +166,9 @@ CAPM3_RUN_LOCAL="${CAPM3_RUN_LOCAL:-false}"
 WORKING_DIR=${WORKING_DIR:-"/opt/metal3-dev-env"}
 NODES_FILE=${NODES_FILE:-"${WORKING_DIR}/ironic_nodes.json"}
 NODES_PLATFORM=${NODES_PLATFORM:-"libvirt"}
-export NAMESPACE=${NAMESPACE:-"metal3"}
+NAMESPACE=${NAMESPACE:-"metal3"}
 
 export NUM_NODES=${NUM_NODES:-"2"}
-export NUM_OF_MASTER_REPLICAS="${NUM_OF_MASTER_REPLICAS:-"1"}"
-export NUM_OF_WORKER_REPLICAS="${NUM_OF_WORKER_REPLICAS:-"1"}"
 export VM_EXTRADISKS=${VM_EXTRADISKS:-"false"}
 
 # Docker registry for local images
@@ -150,7 +185,6 @@ export IRONIC_CLIENT_IMAGE=${IRONIC_CLIENT_IMAGE:-"quay.io/metal3-io/ironic-clie
 export IRONIC_INSPECTOR_IMAGE=${IRONIC_INSPECTOR_IMAGE:-"quay.io/metal3-io/ironic-inspector"}
 export IRONIC_DATA_DIR="$WORKING_DIR/ironic"
 export IRONIC_IMAGE_DIR="$IRONIC_DATA_DIR/html/images"
-export IRONIC_KEEPALIVED_IMAGE=${IRONIC_KEEPALIVED_IMAGE:-"quay.io/metal3-io/keepalived"}
 
 # Baremetal operator image
 export BAREMETAL_OPERATOR_IMAGE=${BAREMETAL_OPERATOR_IMAGE:-"quay.io/metal3-io/baremetal-operator"}
@@ -165,7 +199,7 @@ else
   export CAPM3_IMAGE=${CAPM3_IMAGE:-"quay.io/metal3-io/cluster-api-provider-metal3:master"}
 fi
 
-# default hosts memory
+#default hosts memory
 export DEFAULT_HOSTS_MEMORY=${DEFAULT_HOSTS_MEMORY:-4096}
 
 # Cluster.
@@ -181,7 +215,7 @@ else
   echo "Management cluster forced to be minikube when container runtime is not docker"
   export EPHEMERAL_CLUSTER="minikube"
 fi
-# Kustomize version
+#Kustomize version
 export KUSTOMIZE_VERSION=${KUSTOMIZE_VERSION:-"v3.6.1"}
 
 #Kind version
