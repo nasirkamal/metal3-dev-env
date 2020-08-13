@@ -20,6 +20,7 @@
       namespace: "{{ NAMESPACE }}"
     when: EPHEMERAL_CLUSTER == "minikube"
 
+
   - name: Label BMO CRDs.
     shell: 'kubectl label --overwrite crds baremetalhosts.metal3.io {{ item }}'
     with_items:
@@ -28,23 +29,25 @@
     when: CAPM3_VERSION == "v1alpha3"
 
   - name: Obtain target cluster kubeconfig
-    shell: "kubectl get secrets {{ CLUSTER_NAME }}-kubeconfig -n {{ NAMESPACE }} -o json | jq -r '.data.value'| base64 -d > /tmp/kubeconfig-{{ CLUSTER_NAME }}.yaml"
+    shell: "kubectl get secrets {{ CLUSTER_NAME }}-kubeconfig -n {{ NAMESPACE }} -o json | jq -r '.data.value'| base64 -d > /tmp/target.yaml"
 
   - name: Create namespace
     k8s:
       name: "{{ NAMESPACE }}"
       kind: Namespace
       state: present
-      kubeconfig: "/tmp/kubeconfig-{{ CLUSTER_NAME }}.yaml"
+    environment:
+      KUBECONFIG: "/tmp/target.yaml"
 
   # Install BMO
   - name: Install Baremetal Operator
-    shell: "kustomize build /home/$USER/go/src/github.com/metal3-io/baremetal-operator/deploy/default/ | kubectl --kubeconfig=/tmp/kubeconfig-{{ CLUSTER_NAME }}.yaml apply -n {{ NAMESPACE }} -f -"
+    shell: "kustomize build /home/$USER/go/src/github.com/metal3-io/baremetal-operator/deploy/default/ | kubectl --kubeconfig=/tmp/target.yaml apply -n {{ NAMESPACE }} -f -"
     when: CAPM3_VERSION == "v1alpha3"
+
 
   # Install Ironic
   - name: Install Ironic
-    shell: "kustomize build /home/$USER/go/src/github.com/metal3-io/baremetal-operator/ironic-deployment/keepalived/ | kubectl --kubeconfig=/tmp/kubeconfig-{{ CLUSTER_NAME }}.yaml apply -n {{ NAMESPACE }} -f -"
+    shell: "kustomize build /home/$USER/go/src/github.com/metal3-io/baremetal-operator/ironic-deployment/keepalived/ | kubectl --kubeconfig=/tmp/target.yaml apply -n {{ NAMESPACE }} -f -"
 
   - name: Pivoting test
     delegate_to: "{{ CLUSTER_APIENDPOINT_IP }}"
@@ -68,13 +71,13 @@
     when: CAPM3_VERSION == "v1alpha3"
 
   - name: Initialize Provider component in target cluster
-    shell: "{{ CLUSTERCTL_PATH }}/clusterctl init --kubeconfig /tmp/kubeconfig-{{ CLUSTER_NAME }}.yaml --core cluster-api:{{ CAPIRELEASE }} --bootstrap kubeadm:{{ CAPIRELEASE }} --control-plane kubeadm:{{ CAPIRELEASE }} --infrastructure metal3:{{ CAPM3RELEASE }} -v 5"
+    shell: "{{ CLUSTERCTL_PATH }}/clusterctl init --kubeconfig /tmp/target.yaml --core cluster-api:{{ CAPIRELEASE }} --bootstrap kubeadm:{{ CAPIRELEASE }} --control-plane kubeadm:{{ CAPIRELEASE }} --infrastructure metal3:{{ CAPM3RELEASE }} -v 5"
 
     # Check for pods & nodes on the target cluster
   - name: Check if pods in running state
     shell: "kubectl get pods -A -o json | jq -r '.items[].status.phase' | grep -v Running"
     environment:
-      KUBECONFIG: "/tmp/kubeconfig-{{ CLUSTER_NAME }}.yaml"
+      KUBECONFIG: "/tmp/target.yaml"
     retries: 150
     delay: 20
     register: target_running_pods
@@ -85,7 +88,7 @@
     until: target_running_pods.stdout == ""
 
   - name: Pivot objects to target cluster
-    shell: "{{ CLUSTERCTL_PATH }}/clusterctl move --to-kubeconfig /tmp/kubeconfig-{{ CLUSTER_NAME }}.yaml -n {{ NAMESPACE }} -v 10"
+    shell: "{{ CLUSTERCTL_PATH }}/clusterctl move --to-kubeconfig /tmp/target.yaml -n {{ NAMESPACE }} -v 10"
 
   - name: Check if machines become running.
     shell: |
@@ -94,8 +97,8 @@
         | .metadata.name ] | length'
     register: provisioned_machines
     environment:
-      KUBECONFIG: "/tmp/kubeconfig-{{ CLUSTER_NAME }}.yaml"
-    retries: 50
+      KUBECONFIG: "/tmp/target.yaml"
+    retries: 10
     delay: 20
     until: provisioned_machines.stdout == NUMBER_OF_BMH
 
@@ -106,7 +109,7 @@
         | .metadata.name ] | length'
     register: provisioned_m3m_machines
     environment:
-      KUBECONFIG: "/tmp/kubeconfig-{{ CLUSTER_NAME }}.yaml"
+      KUBECONFIG: "/tmp/target.yaml"
     retries: 10
     delay: 20
     until: provisioned_m3m_machines.stdout == NUMBER_OF_BMH
@@ -117,7 +120,7 @@
         | select (.status.provisioning.state == "provisioned")
         | .metadata.name ] | length'
     environment:
-      KUBECONFIG: "/tmp/kubeconfig-{{ CLUSTER_NAME }}.yaml"
+      KUBECONFIG: "/tmp/target.yaml"
     register: provisioned_bmh
     retries: 10
     delay: 20
@@ -132,7 +135,8 @@
       kind: Deployment
       state: absent
       namespace: "{{ NAMESPACE }}"
-      kubeconfig: "/tmp/kubeconfig-{{ CLUSTER_NAME }}.yaml"
+    environment:
+      KUBECONFIG: "/tmp/target.yaml"
 
   - name: Install Ironic in Source cluster (Ephemeral Cluster is kind)
     shell: "bash /home/$USER/go/src/github.com/metal3-io/baremetal-operator/tools/run_local_ironic.sh"
@@ -145,4 +149,4 @@
     when: EPHEMERAL_CLUSTER == "minikube"
 
   - name: Re-pivot everything back to source cluster
-    shell: "{{ CLUSTERCTL_PATH }}/clusterctl move --kubeconfig /tmp/kubeconfig-{{ CLUSTER_NAME }}.yaml --to-kubeconfig /home/$USER/.kube/config -n {{ NAMESPACE }} -v 10"
+    shell: "{{ CLUSTERCTL_PATH }}/clusterctl move --kubeconfig /tmp/target.yaml --to-kubeconfig /home/$USER/.kube/config -n {{ NAMESPACE }} -v 10"

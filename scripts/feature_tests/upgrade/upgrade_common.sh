@@ -12,9 +12,8 @@ export UPGRADED_K8S_VERSION_2="v1.18.2"
 export UPGRADED_BINARY_VERSION="v1.18.1"
 export CLUSTER_APIENDPOINT_IP=${CLUSTER_APIENDPOINT_IP:-"192.168.111.249"}
 export NUM_NODES=${NUM_NODES:-"4"}
-export NUM_IRONIC_IMAGES=${NUM_IRONIC_IMAGES:-"5"}
 
-export CAPM3RELEASE=${CAPM3RELEASE:-"v0.3.2"}
+export CAPM3RELEASE=${CAPM3RELEASE:-"v0.3.0"}
 export CAPIRELEASE=${CAPIRELEASE:-"v0.3.4"}
 
 export IMAGE_URL=${IMAGE_URL:-"http://172.22.0.1/images/bionic-server-cloudimg-amd64-raw.img"}
@@ -61,22 +60,22 @@ function set_number_of_worker_node_replicas() {
 function provision_controlplane_node() {
     pushd "${METAL3_DEV_ENV_DIR}" || exit
     echo "Provisioning a controlplane node...."
-    bash ./scripts/provision/cluster.sh
-    bash ./scripts/provision/controlplane.sh
+    bash ./scripts/v1alphaX/provision_cluster.sh
+    bash ./scripts/v1alphaX/provision_controlplane.sh
     popd || exit
 }
 
 function provision_worker_node() {
     pushd "${METAL3_DEV_ENV_DIR}" || exit
     echo "Provisioning a worker node...."
-    bash ./scripts/provision/worker.sh
+    bash ./scripts/v1alphaX/provision_worker.sh
     popd || exit
 }
 
 function deprovision_cluster() {
     pushd "${METAL3_DEV_ENV_DIR}" || exit
     echo "Deprovisioning the cluster...."
-    bash ./scripts/deprovision/cluster.sh
+    bash ./scripts/v1alphaX/deprovision_cluster.sh
     popd || exit
 }
 
@@ -368,7 +367,7 @@ providers:
     type: InfrastructureProvider
 EOF
 
-# At first we install "v0.3.0" for which we need to move this
+# At first we install "v0.3.0" for which we need to move this 
 # to the CAPM3PATH repo root folder
 #
 # For the upgrade we need to do two things
@@ -379,7 +378,7 @@ cat <<EOF >clusterctl-settings-metal3.json
    "name": "infrastructure-metal3",
     "config": {
       "componentsFile": "infrastructure-components.yaml",
-      "nextVersion": "v0.3.2"
+      "nextVersion": "v0.3.0"
     }
 }
 EOF
@@ -409,7 +408,7 @@ function createNextVersionControllers() {
         /home/"${USER}"/.cluster-api/overrides/bootstrap-kubeadm/v0.3.6
     cp -r /home/"${USER}"/.cluster-api/overrides/control-plane-kubeadm/v0.3.0 \
         /home/"${USER}"/.cluster-api/overrides/control-plane-kubeadm/v0.3.6
-    cp -r /home/"${USER}"/.cluster-api/overrides/infrastructure-metal3/v0.3.2 \
+    cp -r /home/"${USER}"/.cluster-api/overrides/infrastructure-metal3/v0.3.0 \
         /home/"${USER}"/.cluster-api/overrides/infrastructure-metal3/v0.3.6
 
 }

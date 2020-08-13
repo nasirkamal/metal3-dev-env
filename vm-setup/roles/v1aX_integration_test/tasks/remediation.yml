@@ -1,34 +1,46 @@
 ---
-  - name: Get the master objects
-    shell: "kubectl get m3m -n {{ NAMESPACE }} -o json |  jq -r '.items[] | \
-            select(.metadata.name | contains(\"controlplane\")) | \
-            (.metadata.annotations.\"metal3.io/BareMetalHost\"),([.metadata.ownerReferences |.[] | \
-            select(.kind==\"Machine\")][0] | .name)'"
-    register: masters
+  - name: Get the name of a worker bmh name
+    shell: |
+       kubectl get bmh -n "{{ NAMESPACE }}" -o json | jq -r '.items[]
+       |select(.status.provisioning.state | contains("provisioned")) |select(.spec.consumerRef.name
+       | contains("{{ CLUSTER_NAME }}-workers")) | .metadata.name'
+    register: worker_bmh_name
 
-  - name: Get the worker objects
-    shell: "kubectl get m3m -n {{ NAMESPACE }} -o json | jq -r '.items[] | \
-            select(.metadata.name | contains(\"workers\")) | \
-            (.metadata.annotations.\"metal3.io/BareMetalHost\"),([.metadata.ownerReferences |.[] | \
-            select(.kind==\"Machine\")][0] | .name)'"
-    register: workers
- 
+  - name: Get the names of master bmh name
+    shell: |
+       kubectl get bmh -n "{{ NAMESPACE }}" -o json | jq -r '.items[]
+       |select(.status.provisioning.state | contains("provisioned")) |select(.spec.consumerRef.name
+       | contains("{{ CLUSTER_NAME }}-controlplane")) | .metadata.name'
+    register: master_bmh_name
+
   - set_fact:
-      WORKER_BMH: "{{ workers.stdout_lines.0 | replace('metal3/','')}}"
-      WORKER_NODE: "{{ workers.stdout_lines.1 }}"
-      MASTER_BMH_0: "{{ masters.stdout_lines.0 | replace('metal3/','')}}"
-      MASTER_NODE_0: "{{ masters.stdout_lines.1 }}"
-      MASTER_BMH_1: "{{ masters.stdout_lines.2 | replace('metal3/','')}}"
-      MASTER_NODE_1: "{{ masters.stdout_lines.3 }}"
-      MASTER_BMH_2: "{{ masters.stdout_lines.4 | replace('metal3/','')}}"
-      MASTER_NODE_2: "{{ masters.stdout_lines.5 }}"
-      MASTER_VM_0: "{{ masters.stdout_lines.0 | replace('-','_') | replace('metal3/','') }}"
-      MASTER_VM_1: "{{ masters.stdout_lines.2 | replace('-','_') | replace('metal3/','') }}"
-      MASTER_VM_2: "{{ masters.stdout_lines.4 | replace('-','_') | replace('metal3/','') }}"
-      WORKER_VM: "{{ workers.stdout_lines.0 | replace('-','_') | replace('metal3/','') }}"
+      WORKER_BMH: "{{ worker_bmh_name.stdout }}"
+      MASTER_BMH_0: "{{ master_bmh_name.stdout_lines.0 }}"
+      MASTER_BMH_1: "{{ master_bmh_name.stdout_lines.1 }}"
+      MASTER_BMH_2: "{{ master_bmh_name.stdout_lines.2 }}"
+  
+  - set_fact:
+      WORKER_NODE_VM: "{{ WORKER_BMH | replace('-','_') }}"
+      MASTER_NODE_0_VM: "{{ MASTER_BMH_0 | replace('-','_') }}"
+      MASTER_NODE_1_VM: "{{ MASTER_BMH_1 | replace('-','_') }}"
+      MASTER_NODE_2_VM: "{{ MASTER_BMH_2 | replace('-','_') }}"
 
-  - name: Fetch the target cluster kubeconfig
+  - name: Obtain the kubeconfig from target cluster
     shell: "kubectl get secrets {{ CLUSTER_NAME }}-kubeconfig -n {{ NAMESPACE }} -o json | jq -r '.data.value'| base64 -d > /tmp/kubeconfig-{{ CLUSTER_NAME }}.yaml"
+    
+  - name: Get the name of the worker node
+    shell: "kubectl get nodes --kubeconfig /tmp/kubeconfig-{{ CLUSTER_NAME }}.yaml | grep none | awk '{print $1}'"
+    register: worker_node_name
+
+  - name: Get the name of the master node
+    shell: "kubectl get nodes --kubeconfig /tmp/kubeconfig-{{ CLUSTER_NAME }}.yaml | grep master | awk '{print $1}'"
+    register: master_nodes_name
+
+  - set_fact:
+      WORKER_NODE: "{{ worker_node_name.stdout }}"
+      MASTER_NODE_0: "{{ master_nodes_name.stdout_lines.0 }}"
+      MASTER_NODE_1: "{{ master_nodes_name.stdout_lines.1 }}"
+      MASTER_NODE_2: "{{ master_nodes_name.stdout_lines.2 }}"
 
   # Reboot a single worker node
   - name: Reboot "{{ WORKER_BMH }}"
@@ -42,23 +54,36 @@
     register: shutdown_vms
     retries: 50
     delay: 10
-    until: WORKER_VM in shutdown_vms.list_vms
+    until: WORKER_NODE_VM in shutdown_vms.list_vms
     become: yes
     become_user: root
 
-  - name: Wait until rebooted worker "{{ WORKER_NODE }}" becomes NotReady
-    shell: "kubectl get nodes --kubeconfig /tmp/kubeconfig-{{ CLUSTER_NAME }}.yaml | grep -w NotReady | awk '{print $1}' | sort"
-    retries: 150
-    delay: 3
-    register: not_ready_nodes
-    until: WORKER_NODE in not_ready_nodes.stdout_lines
+  - name: Rebooted node status
+    delegate_to: "{{ CLUSTER_APIENDPOINT_IP }}"
+    vars:
+      ansible_user: "{{ IMAGE_USERNAME }}"
+      ansible_ssh_private_key_file: "{{ SSH_PRIVATE_KEY }}"
+      ansible_python_interpreter: /usr/bin/python3
+    become: yes
+    become_user: "{{ IMAGE_USERNAME }}"
+    block:
+      - name: Wait until rebooted worker "{{ WORKER_BMH }}" becomes NotReady
+        shell: "kubectl get nodes | grep -w NotReady | awk '{print $1}'"
+        environment:
+          KUBECONFIG: "/home/{{ IMAGE_USERNAME }}/.kube/config"
+        retries: 150
+        delay: 3
+        register: not_ready_nodes
+        until: WORKER_NODE in not_ready_nodes.stdout_lines
 
-  - name: Wait until rebooted worker "{{ WORKER_NODE }}" becomes Ready
-    shell: "kubectl get nodes --kubeconfig /tmp/kubeconfig-{{ CLUSTER_NAME }}.yaml | grep -w Ready | awk '{print $1}' | sort"
-    retries: 150
-    delay: 3
-    register: ready_nodes
-    until: WORKER_NODE in ready_nodes.stdout_lines
+      - name: Wait until rebooted worker becomes Ready again
+        shell: "kubectl get nodes | grep -w Ready | awk '{print $1}'"
+        environment:
+          KUBECONFIG: "/home/{{ IMAGE_USERNAME }}/.kube/config"
+        retries: 150
+        delay: 3
+        register: ready_nodes
+        until: WORKER_NODE in ready_nodes.stdout_lines
 
   - name: List only running VMs
     virt:
@@ -67,7 +92,7 @@
     register: running_vms
     retries: 50
     delay: 10
-    until: WORKER_VM in running_vms.list_vms
+    until: WORKER_NODE_VM in running_vms.list_vms
     become: yes
     become_user: root
 
@@ -75,16 +100,16 @@
   - name: Power cycle a single worker node
     include: power_cycle.yml
     vars:
-      BMH_NODE: "{{ WORKER_BMH }}"
-      LIBVIRT_VM: "{{ WORKER_VM }}"
+      BMH_NODE: '{{ WORKER_BMH }}'
+      LIBVIRT_VM: "{{ WORKER_NODE_VM }}"
       K8S_NODE: "{{ WORKER_NODE }}"
 
   # Power cycle a single master node
   - name: Power cycle a single master node
     include: power_cycle.yml
     vars: 
-      BMH_NODE: "{{ MASTER_BMH_0 }}"
-      LIBVIRT_VM: "{{ MASTER_VM_0 }}"
+      BMH_NODE: '{{ MASTER_BMH_0 }}'
+      LIBVIRT_VM: "{{ MASTER_NODE_0_VM }}"
       K8S_NODE: "{{ MASTER_NODE_0 }}"
 
   # Power cycle two master nodes
@@ -106,8 +131,8 @@
     retries: 50
     delay: 10
     until:
-      - MASTER_VM_1 in shutdown_vms.list_vms
-      - MASTER_VM_2 in shutdown_vms.list_vms
+      - MASTER_NODE_1_VM in shutdown_vms.list_vms
+      - MASTER_NODE_2_VM in shutdown_vms.list_vms
     become: yes
     become_user: root
 
@@ -119,7 +144,7 @@
       - "{{ MASTER_BMH_2 }}"
 
   - name: Wait until powered on master nodes become Ready
-    shell: "kubectl get nodes --kubeconfig /tmp/kubeconfig-{{ CLUSTER_NAME }}.yaml | grep -w Ready | awk '{print $1}' | sort"
+    shell: "kubectl get nodes --kubeconfig /tmp/kubeconfig-{{ CLUSTER_NAME }}.yaml | grep -w Ready | awk '{print $1}'"
     register: ready_master
     retries: 150
     delay: 3
@@ -135,7 +160,7 @@
     retries: 50
     delay: 10
     until:
-      - MASTER_VM_1 in running_vms.list_vms
-      - MASTER_VM_2 in running_vms.list_vms
+      - MASTER_NODE_1_VM in running_vms.list_vms
+      - MASTER_NODE_2_VM in running_vms.list_vms
     become: yes
     become_user: root
