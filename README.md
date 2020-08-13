@@ -17,8 +17,8 @@ Instructions can be found here: <https://metal3.io/try-it.html>
 
 Versions v1alpha3 or v1alpha4 are later referred as **v1alphaX**.
 
-The v1alphaX deployment can be done with Ubuntu 18.04 or Centos 8 target host
-images.
+The v1alphaX deployment can be done with Ubuntu 18.04, 20.04 or Centos 8 target host
+images. By default, for Ubuntu based target hosts we are using Ubuntu 20.04
 
 ### Requirements
 
@@ -77,15 +77,15 @@ You can check a list of all the environment variables [here](vars.md)
 ### Deploy the target cluster
 
 ```sh
-./scripts/v1alphaX/provision_cluster.sh
-./scripts/v1alphaX/provision_controlplane.sh
-./scripts/v1alphaX/provision_worker.sh
+./scripts/provision/cluster.sh
+./scripts/provision/controlplane.sh
+./scripts/provision/worker.sh
 ```
 
 ### Pivot to the target cluster
 
 ```sh
-./scripts/v1alphaX/pivot.sh
+./scripts/provision/pivot.sh
 ```
 
 ### Delete the target cluster

@@ -6,6 +6,8 @@ source lib/logging.sh
 # shellcheck disable=SC1091
 source lib/common.sh
 # shellcheck disable=SC1091
+source lib/releases.sh
+# shellcheck disable=SC1091
 source lib/network.sh
 
 # Remove old SSH keys
@@ -23,7 +25,7 @@ cd bin || exit
 popd || exit
 
 pushd "${BMOPATH}" || exit
-kubectl delete -f bmhosts_crs.yaml -n "${NAMESPACE}" --timeout 10s
+kubectl delete -f "${WORKING_DIR}/bmhosts_crs.yaml" -n "${NAMESPACE}" --timeout 10s
 popd || exit
 
 declare -a OBJECTS=("cluster" \
@@ -67,7 +69,7 @@ cd bin || exit
 popd || exit
 
 pushd "${BMOPATH}" || exit
-kubectl apply -f bmhosts_crs.yaml -n "${NAMESPACE}"
+kubectl apply -f "${WORKING_DIR}/bmhosts_crs.yaml" -n "${NAMESPACE}"
 popd || exit
 
 make -C "${SCRIPTDIR}" verify

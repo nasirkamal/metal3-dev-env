@@ -39,7 +39,7 @@ look as following:
 Each feature has its own Makefile that will call feature specific test steps.
 `setup_env.sh` is used to build an environment, i.e. run `make`, that will give
 N (from the test-framework perspective N=4) number of ready BMH as an output.
-`cleanup_env.s` is used for intermediate cleaning between each feature test.
+`cleanup_env.sh` is used for intermediate cleaning between each feature test.
 `feature_test_provisioning.sh` and `feature_test_deprovisioning.sh` are used by
 each feature test to provision/deprovision cluster and BMH.
 
@@ -71,12 +71,23 @@ Currently the test-framework uses the following environment variables
 by default:
 
 ```bash
-export CAPM3_VERSION=v1alpha3
+export CAPM3_VERSION=v1alpha4
 export IMAGE_OS=Ubuntu
-export EXPHEMERAL_CLUSTER=kind
+export EPHEMERAL_CLUSTER=kind
 export CONTAINER_RUNTIME=docker
 export NUM_NODES=4
 ```
+
+Environment variables needed for upgrade tests running clusterctl,
+set as default values:
+
+```bash
+export CAPM3RELEASE=v0.3.2
+export CAPIRELEASE=v0.3.4
+```
+
+Recommended resource requirements for the host machine: 8C CPUs, 32 GB RAM, 300
+GB disk space.
 
 ## CI jobs configuration
 
@@ -86,7 +97,7 @@ job which runs every day, and second one is
 [airship_*_feature_tests_ubuntu](https://jenkins.nordix.org/view/Airship/job/airship_metal3io_metal3_dev_env_feature_tests_ubuntu/)
 that can be triggered with `/test-features` phrase on a pull request. Depending
 on where from the job
-is treggered, **\*** can be:
+is triggered, **\*** can be:
 
 - metal3io_metal3_dev_env
 - metal3io_capi_m3
